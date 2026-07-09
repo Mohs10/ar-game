@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>AR Solar System Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#0B1026;
+    --gold:#F2C879;
+    --gold-dim:#B99857;
+    --nebula:#9D5C9E;
+    --cyan:#6FD6C4;
+    --coral:#E2725B;
+    --text-light:#F5F1E8;
+    --panel-bg:rgba(11,16,38,0.86);
+    --panel-border:rgba(242,200,121,0.28);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:var(--bg-deep);
+    font-family:'Space Grotesk',sans-serif;color:var(--text-light);}
+  h1,h2,h3,.display{font-family:'Fraunces',serif;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+
+  #camera-feed{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#000;}
+  #scene-canvas{position:fixed;inset:0;width:100%;height:100%;z-index:1;touch-action:none;}
+  #tap-catcher{position:fixed;inset:0;z-index:5;}
+
+  /* ---------- Starfield fallback (no camera) ---------- */
+  #camera-feed.hidden-cam{display:none;}
+  body.no-camera #scene-canvas{background:radial-gradient(ellipse at 50% 20%, #171f47 0%, #0B1026 65%, #060812 100%);}
+
+  /* ---------- Reticle ---------- */
+  #reticle{
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:74px;height:74px;z-index:6;pointer-events:none;
+    display:flex;align-items:center;justify-content:center;
+    transition:transform .15s ease;
+  }
+  #reticle svg{width:100%;height:100%;display:block;}
+  #reticle .ring{fill:none;stroke:rgba(245,241,232,0.55);stroke-width:1.5;}
+  #reticle.locked .ring{stroke:var(--cyan);stroke-width:2.5;}
+  #reticle .tick{stroke:rgba(245,241,232,0.55);stroke-width:1.5;}
+  #reticle.locked .tick{stroke:var(--cyan);}
+  #reticle .sweep{stroke:var(--cyan);stroke-width:2;fill:none;opacity:0;}
+  #reticle.locked .sweep{opacity:1;animation:sweep 1.1s linear infinite;}
+  @keyframes sweep{from{stroke-dashoffset:0;}to{stroke-dashoffset:-226;}}
+
+  #lock-label{
+    position:fixed;left:50%;top:calc(50% + 46px);transform:translateX(-50%);
+    z-index:6;pointer-events:none;text-align:center;opacity:0;transition:opacity .15s ease;
+  }
+  #lock-label.show{opacity:1;}
+  #lock-label .name{font-family:'Fraunces',serif;font-weight:600;font-size:19px;color:var(--gold);
+    text-shadow:0 2px 10px rgba(0,0,0,0.6);}
+  #lock-label .hint{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--cyan);margin-top:2px;text-shadow:0 2px 8px rgba(0,0,0,0.6);}
+
+  /* ---------- Top HUD ---------- */
+  #top-hud{
+    position:fixed;top:0;left:0;right:0;z-index:7;pointer-events:none;
+    padding:calc(env(safe-area-inset-top,0px) + 14px) 16px 0 16px;
+    display:flex;justify-content:space-between;align-items:flex-start;
+  }
+  .hud-chip{
+    background:var(--panel-bg);border:1px solid var(--panel-border);
+    border-radius:10px;padding:8px 14px;backdrop-filter:blur(6px);
+  }
+  #score-chip .label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-dim);}
+  #score-chip .value{font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:var(--gold);line-height:1.1;}
+  #mode-chip{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--cyan);}
+
+  /* ---------- Compass strip ---------- */
+  #compass-wrap{
+    position:fixed;top:calc(env(safe-area-inset-top,0px) + 62px);left:50%;transform:translateX(-50%);
+    width:min(340px,84vw);height:34px;z-index:6;pointer-events:none;
+    overflow:hidden;border-radius:8px;
+    background:var(--panel-bg);border:1px solid var(--panel-border);backdrop-filter:blur(6px);
+  }
+  #compass-track{position:absolute;top:0;left:50%;height:100%;width:2160px;margin-left:-1080px;}
+  .cmp-tick{position:absolute;top:0;bottom:0;width:1px;background:rgba(245,241,232,0.18);}
+  .cmp-label{position:absolute;top:5px;font-family:'IBM Plex Mono',monospace;font-size:10px;
+    color:rgba(245,241,232,0.55);transform:translateX(-50%);}
+  .cmp-dot{position:absolute;top:14px;width:7px;height:7px;border-radius:50%;transform:translateX(-50%);
+    background:var(--gold);box-shadow:0 0 6px rgba(242,200,121,0.7);}
+  .cmp-dot.scanned{background:var(--cyan);box-shadow:0 0 6px rgba(111,214,196,0.6);opacity:.55;}
+  #compass-center-mark{position:absolute;left:50%;top:0;bottom:0;width:2px;background:var(--gold);
+    transform:translateX(-1px);z-index:2;}
+
+  /* ---------- Buttons ---------- */
+  .btn{
+    font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;
+    border:none;border-radius:10px;padding:14px 26px;cursor:pointer;
+    background:var(--gold);color:#241a05;transition:transform .12s ease, filter .12s ease;
+  }
+  .btn:active{transform:scale(0.96);}
+  .btn.secondary{background:transparent;color:var(--text-light);border:1.5px solid var(--panel-border);}
+  .btn.correct{background:var(--cyan);color:#04211c;}
+  .btn.wrong{background:var(--coral);color:#2a0e08;}
+  .btn:disabled{opacity:.55;pointer-events:none;}
+
+  /* ---------- Overlays (start / permission / end) ---------- */
+  .overlay{
+    position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    padding:24px;text-align:center;
+    background:radial-gradient(ellipse at 50% 30%, rgba(157,92,158,0.25), rgba(6,8,18,0.94) 65%);
+    backdrop-filter:blur(4px);
+  }
+  .overlay.hidden{display:none;}
+  .panel-card{
+    max-width:420px;width:100%;background:var(--panel-bg);border:1px solid var(--panel-border);
+    border-radius:18px;padding:32px 26px;box-shadow:0 20px 60px rgba(0,0,0,0.5);
+  }
+  .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--cyan);margin-bottom:10px;}
+  .panel-card h1{font-size:30px;font-weight:600;color:var(--gold);margin:0 0 10px;line-height:1.15;}
+  .panel-card p{font-size:14.5px;line-height:1.55;color:rgba(245,241,232,0.82);margin:0 0 22px;}
+  .orbit-mark{width:56px;height:56px;margin:0 auto 18px;position:relative;}
+  .orbit-mark svg{width:100%;height:100%;animation:spin 14s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* ---------- Planet info modal ---------- */
+  #planet-modal{align-items:flex-end;padding:0;}
+  #planet-modal .panel-card{
+    max-width:none;width:100%;border-radius:22px 22px 0 0;border-bottom:none;
+    padding:26px 22px calc(env(safe-area-inset-bottom,0px) + 26px);
+    max-height:78vh;overflow-y:auto;
+    animation:slideUp .25s ease;
+  }
+  @keyframes slideUp{from{transform:translateY(30px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  #modal-header{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
+  #modal-swatch{width:44px;height:44px;border-radius:50%;flex:none;box-shadow:0 0 18px rgba(0,0,0,0.4) inset;}
+  #modal-title{font-size:22px;font-weight:600;color:var(--gold);margin:0;}
+  #modal-fact{font-size:14.5px;line-height:1.6;color:rgba(245,241,232,0.88);margin:0 0 20px;}
+  #quiz-q{font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.05em;
+    color:var(--cyan);text-transform:uppercase;margin-bottom:8px;}
+  #quiz-question-text{font-size:15.5px;font-weight:500;margin:0 0 14px;color:var(--text-light);}
+  .quiz-opt{
+    display:block;width:100%;text-align:left;background:rgba(245,241,232,0.06);
+    border:1px solid var(--panel-border);border-radius:10px;padding:12px 14px;margin-bottom:9px;
+    font-family:'Space Grotesk',sans-serif;font-size:14.5px;color:var(--text-light);cursor:pointer;
+  }
+  #quiz-feedback{font-size:13px;margin:6px 0 16px;min-height:18px;font-weight:600;}
+  #quiz-feedback.correct{color:var(--cyan);}
+  #quiz-feedback.wrong{color:var(--coral);}
+  #modal-continue{width:100%;display:none;}
+
+  /* ---------- Progress dots on start-of-explore ---------- */
+  #progress-track{display:flex;gap:6px;justify-content:center;margin-top:4px;flex-wrap:wrap;}
+  #progress-track .pdot{width:8px;height:8px;border-radius:50%;background:rgba(245,241,232,0.2);}
+  #progress-track .pdot.done{background:var(--cyan);}
+
+  .small-note{font-family:'IBM Plex Mono',monospace;font-size:11px;color:rgba(245,241,232,0.5);
+    margin-top:16px;line-height:1.5;}
+</style>
+</head>
+<body>
+
+  <video id="camera-feed" autoplay playsinline muted></video>
+  <canvas id="scene-canvas"></canvas>
+  <div id="tap-catcher"></div>
+
+  <!-- Reticle -->
+  <div id="reticle">
+    <svg viewBox="0 0 74 74">
+      <circle class="ring" cx="37" cy="37" r="26"/>
+      <circle class="sweep" cx="37" cy="37" r="26" stroke-dasharray="8 6.5"/>
+      <line class="tick" x1="37" y1="4" x2="37" y2="14"/>
+      <line class="tick" x1="37" y1="60" x2="37" y2="70"/>
+      <line class="tick" x1="4" y1="37" x2="14" y2="37"/>
+      <line class="tick" x1="60" y1="37" x2="70" y2="37"/>
+    </svg>
+  </div>
+  <div id="lock-label"><div class="name" id="lock-name"></div><div class="hint">Tap anywhere to scan</div></div>
+
+  <!-- Top HUD -->
+  <div id="top-hud">
+    <div class="hud-chip" id="score-chip"><div class="label">Scanned</div><div class="value" id="score-value">0 / 9</div></div>
+    <div class="hud-chip" id="mode-chip">Mission Mode</div>
+  </div>
+  <div id="compass-wrap"><div id="compass-center-mark"></div><div id="compass-track"></div></div>
+
+  <!-- Start screen -->
+  <div class="overlay" id="start-screen">
+    <div class="panel-card">
+      <div class="orbit-mark"><svg viewBox="0 0 56 56"><circle cx="28" cy="28" r="24" fill="none" stroke="rgba(242,200,121,0.35)" stroke-width="1"/><circle cx="28" cy="4" r="4" fill="#F2C879"/></svg></div>
+      <div class="eyebrow">Field Mission · Astronomy</div>
+      <h1>AR Solar System Explorer</h1>
+      <p>Nine worlds are hidden in the space around you. Pan your camera to find them, lock on with the scanner, and answer a quick question to log each discovery.</p>
+      <button class="btn" id="start-btn" style="width:100%;">Calibrate &amp; Start</button>
+      <div class="small-note" id="start-note">Uses your camera and motion sensors. Nothing is recorded or saved.</div>
+    </div>
+  </div>
+
+  <!-- Permission error -->
+  <div class="overlay hidden" id="permission-screen">
+    <div class="panel-card">
+      <div class="eyebrow">Sensors Unavailable</div>
+      <h1 id="perm-title">Camera access needed</h1>
+      <p id="perm-text">We couldn't access your camera or motion sensors. You can still play in Planetarium Mode — drag the screen to look around instead.</p>
+      <button class="btn" id="planetarium-btn" style="width:100%;">Continue in Planetarium Mode</button>
+    </div>
+  </div>
+
+  <!-- Planet modal -->
+  <div class="overlay hidden" id="planet-modal">
+    <div class="panel-card">
+      <div id="modal-header"><div id="modal-swatch"></div><h2 id="modal-title"></h2></div>
+      <p id="modal-fact"></p>
+      <div id="quiz-q">Quick Check</div>
+      <p id="quiz-question-text"></p>
+      <div id="quiz-options"></div>
+      <div id="quiz-feedback"></div>
+      <button class="btn" id="modal-continue">Continue Exploring</button>
+    </div>
+  </div>
+
+  <!-- End screen -->
+  <div class="overlay hidden" id="end-screen">
+    <div class="panel-card">
+      <div class="eyebrow">Mission Complete</div>
+      <h1>All worlds logged</h1>
+      <p id="end-summary">Final score</p>
+      <div id="progress-track"></div>
+      <button class="btn" id="replay-btn" style="width:100%;margin-top:20px;">Explore Again</button>
+    </div>
+  </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r160/three.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ================= Planet data ================= */
+  const PLANETS = [
+    {id:'sun', name:'The Sun', color:'#F7B23B', emissive:true, size:2.6, az:0,   el:2,
+      fact:"The Sun is a star made almost entirely of hot gas. Deep in its core, nuclear fusion turns hydrogen into helium, releasing the light and heat that the whole solar system depends on.",
+      q:"What process powers the Sun?", opts:["Burning coal","Nuclear fusion","Lightning strikes"], correct:1},
+    {id:'mercury', name:'Mercury', color:'#B7A99A', size:0.9, az:40, el:-6,
+      fact:"Mercury is the smallest planet and sits closest to the Sun. With almost no atmosphere to trap heat, its surface swings from scorching days to freezing nights.",
+      q:"Why does Mercury have huge temperature swings between day and night?", opts:["It has no atmosphere to trap heat","It's covered in ice","It's far from the Sun"], correct:0},
+    {id:'venus', name:'Venus', color:'#E6C28B', size:1.35, az:80, el:9,
+      fact:"Venus is the hottest planet in the solar system — hotter even than Mercury. A thick blanket of carbon dioxide traps heat in a runaway greenhouse effect.",
+      q:"Why is Venus hotter than Mercury even though it's farther from the Sun?", opts:["Venus has more volcanoes","A thick CO2 atmosphere traps heat","Venus spins faster"], correct:1},
+    {id:'earth', name:'Earth', color:'#3C82C9', size:1.4, az:120, el:-3,
+      fact:"Earth is the only planet known to support life, thanks to liquid water, a protective atmosphere, and a stable temperature range.",
+      q:"What is unique about Earth compared to other planets in our solar system?", opts:["It has the most moons","It's the only planet known to support life","It's the largest planet"], correct:1},
+    {id:'mars', name:'Mars', color:'#C1522E', size:1.05, az:160, el:8,
+      fact:"Mars gets its reddish color from iron oxide — essentially rust — coating its dusty surface. It's also home to Olympus Mons, the largest volcano in the solar system.",
+      q:"What gives Mars its reddish color?", opts:["Iron oxide (rust) in the soil","Red clouds","Reflected sunlight from Earth"], correct:0},
+    {id:'jupiter', name:'Jupiter', color:'#D9A66C', size:2.3, az:200, el:-8,
+      fact:"Jupiter is the largest planet in the solar system, a giant ball of gas. Its Great Red Spot is a storm larger than Earth that has raged for centuries.",
+      q:"What is Jupiter's Great Red Spot?", opts:["A giant volcano","A massive, centuries-old storm","A crater from an asteroid"], correct:1},
+    {id:'saturn', name:'Saturn', color:'#E8D3A0', size:2.0, az:240, el:6, ring:true,
+      fact:"Saturn is famous for its spectacular rings, made of countless chunks of ice and rock ranging from dust-sized grains to boulders.",
+      q:"What are Saturn's rings mostly made of?", opts:["Solid rock plates","Ice and rock particles","Frozen gas clouds"], correct:1},
+    {id:'uranus', name:'Uranus', color:'#9FD8D0', size:1.5, az:280, el:-5,
+      fact:"Uranus is tipped almost completely on its side, so it essentially rolls around the Sun rather than spinning upright like most other planets.",
+      q:"What's unusual about how Uranus spins?", opts:["It rotates almost on its side","It doesn't rotate at all","It has two suns"], correct:0},
+    {id:'neptune', name:'Neptune', color:'#4C6FE0', size:1.4, az:320, el:4,
+      fact:"Neptune is the farthest planet from the Sun and has the fastest winds in the solar system, reaching speeds of over 1,200 miles per hour.",
+      q:"What is notable about Neptune's winds?", opts:["They are the fastest in the solar system","They never blow","They're only found near its rings"], correct:0},
+  ];
+  const DIST = 15;
+  const LOCK_ANGLE_DEG = 7;
+
+  let scannedCount = 0;
+  const scannedSet = new Set();
+
+  /* ================= DOM refs ================= */
+  const videoEl = document.getElementById('camera-feed');
+  const canvasEl = document.getElementById('scene-canvas');
+  const tapCatcher = document.getElementById('tap-catcher');
+  const reticle = document.getElementById('reticle');
+  const lockLabel = document.getElementById('lock-label');
+  const lockName = document.getElementById('lock-name');
+  const scoreValue = document.getElementById('score-value');
+  const modeChip = document.getElementById('mode-chip');
+  const compassTrack = document.getElementById('compass-track');
+  const startScreen = document.getElementById('start-screen');
+  const startBtn = document.getElementById('start-btn');
+  const permScreen = document.getElementById('permission-screen');
+  const planetariumBtn = document.getElementById('planetarium-btn');
+  const planetModal = document.getElementById('planet-modal');
+  const modalSwatch = document.getElementById('modal-swatch');
+  const modalTitle = document.getElementById('modal-title');
+  const modalFact = document.getElementById('modal-fact');
+  const quizQText = document.getElementById('quiz-question-text');
+  const quizOptions = document.getElementById('quiz-options');
+  const quizFeedback = document.getElementById('quiz-feedback');
+  const modalContinue = document.getElementById('modal-continue');
+  const endScreen = document.getElementById('end-screen');
+  const endSummary = document.getElementById('end-summary');
+  const progressTrack = document.getElementById('progress-track');
+  const replayBtn = document.getElementById('replay-btn');
+
+  /* ================= Three.js scene ================= */
+  let renderer, scene, camera;
+  const meshById = {};
+
+  function initScene(){
+    renderer = new THREE.WebGLRenderer({canvas:canvasEl, alpha:true, antialias:true});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(62, window.innerWidth/window.innerHeight, 0.1, 100);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const key = new THREE.PointLight(0xfff2d6, 1.3, 100);
+    key.position.set(0,0,0);
+    scene.add(key);
+
+    PLANETS.forEach(p=>{
+      const geo = new THREE.SphereGeometry(p.size, 48, 48);
+      const tex = makePlanetTexture(p);
+      const mat = p.emissive
+        ? new THREE.MeshBasicMaterial({map:tex})
+        : new THREE.MeshStandardMaterial({map:tex, roughness:0.85, metalness:0.05});
+      const mesh = new THREE.Mesh(geo, mat);
+      const pos = azElToVec(p.az, p.el, DIST);
+      mesh.position.copy(pos);
+      scene.add(mesh);
+
+      if(p.ring){
+        const ringTex = makeRingTexture();
+        const ringGeo = new THREE.RingGeometry(p.size*1.5, p.size*2.5, 64);
+        const ringMat = new THREE.MeshBasicMaterial({map:ringTex, side:THREE.DoubleSide, transparent:true, opacity:0.9});
+        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        ringMesh.rotation.x = Math.PI/2.3;
+        ringMesh.position.copy(pos);
+        scene.add(ringMesh);
+      }
+
+      // soft glow halo
+      const glowGeo = new THREE.SphereGeometry(p.size*1.28, 24, 24);
+      const glowMat = new THREE.MeshBasicMaterial({color:new THREE.Color(p.color), transparent:true, opacity:0.16, side:THREE.BackSide});
+      const glow = new THREE.Mesh(glowGeo, glowMat);
+      glow.position.copy(pos);
+      scene.add(glow);
+
+      meshById[p.id] = {mesh, data:p, pos};
+    });
+
+    window.addEventListener('resize', onResize);
+  }
+
+  function azElToVec(azDeg, elDeg, dist){
+    const az = THREE.MathUtils.degToRad(azDeg);
+    const el = THREE.MathUtils.degToRad(elDeg);
+    const x = dist*Math.cos(el)*Math.sin(az);
+    const y = dist*Math.sin(el);
+    const z = -dist*Math.cos(el)*Math.cos(az);
+    return new THREE.Vector3(x,y,z);
+  }
+
+  function onResize(){
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  /* ---- procedural planet textures ---- */
+  function makePlanetTexture(p){
+    const size = 256;
+    const c = document.createElement('canvas'); c.width=size; c.height=size;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = p.color; ctx.fillRect(0,0,size,size);
+
+    if(p.id==='sun'){
+      const grad = ctx.createRadialGradient(size/2,size/2,10,size/2,size/2,size/1.4);
+      grad.addColorStop(0,'#FFE9A8'); grad.addColorStop(0.5,'#F7B23B'); grad.addColorStop(1,'#D9701F');
+      ctx.fillStyle = grad; ctx.fillRect(0,0,size,size);
+    } else if(p.id==='jupiter'){
+      for(let y=0;y<size;y+=size/14){
+        ctx.fillStyle = (Math.floor(y/(size/14))%2===0) ? shade(p.color,0.12) : shade(p.color,-0.12);
+        ctx.fillRect(0,y,size,size/14+1);
+      }
+      spot(ctx, size*0.68, size*0.55, 26, '#C1522E', 0.55);
+    } else if(p.id==='saturn'){
+      for(let y=0;y<size;y+=size/10){
+        ctx.fillStyle = (Math.floor(y/(size/10))%2===0) ? shade(p.color,0.08) : shade(p.color,-0.06);
+        ctx.fillRect(0,y,size,size/10+1);
+      }
+    } else if(p.id==='earth'){
+      ctx.fillStyle = '#2E6FB0'; ctx.fillRect(0,0,size,size);
+      ctx.fillStyle = '#3E8E5A';
+      blob(ctx,60,90,34); blob(ctx,150,60,26); blob(ctx,180,150,30); blob(ctx,90,190,22);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillRect(0,0,size,18); ctx.fillRect(0,size-18,size,18);
+    } else if(p.id==='mars'){
+      spot(ctx, size*0.3, size*0.35, 40, shade(p.color,-0.2), 0.4);
+      spot(ctx, size*0.7, size*0.65, 30, shade(p.color,-0.25), 0.35);
+      ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(size*0.5,size*0.08,14,0,Math.PI*2); ctx.fill();
+    } else if(p.id==='mercury' || p.id==='venus'){
+      for(let i=0;i<26;i++){
+        const cx=Math.random()*size, cy=Math.random()*size, r=6+Math.random()*16;
+        spot(ctx, cx, cy, r, shade(p.color, (Math.random()-0.5)*0.3), 0.3);
+      }
+    } else { // uranus / neptune - smooth banding
+      for(let y=0;y<size;y+=size/6){
+        ctx.fillStyle = (Math.floor(y/(size/6))%2===0) ? shade(p.color,0.06) : shade(p.color,-0.06);
+        ctx.fillRect(0,y,size,size/6+1);
+      }
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = THREE.RepeatWrapping;
+    return tex;
+  }
+  function makeRingTexture(){
+    const size=256;
+    const c=document.createElement('canvas'); c.width=size; c.height=8;
+    const ctx=c.getContext('2d');
+    const grad=ctx.createLinearGradient(0,0,size,0);
+    grad.addColorStop(0,'rgba(232,211,160,0)');
+    grad.addColorStop(0.25,'rgba(232,211,160,0.85)');
+    grad.addColorStop(0.5,'rgba(200,180,140,0.5)');
+    grad.addColorStop(0.75,'rgba(232,211,160,0.85)');
+    grad.addColorStop(1,'rgba(232,211,160,0)');
+    ctx.fillStyle=grad; ctx.fillRect(0,0,size,8);
+    return new THREE.CanvasTexture(c);
+  }
+  function shade(hex, amt){
+    const col = new THREE.Color(hex);
+    const hsl = {}; col.getHSL(hsl);
+    hsl.l = Math.min(1, Math.max(0, hsl.l + amt));
+    col.setHSL(hsl.h, hsl.s, hsl.l);
+    return '#'+col.getHexString();
+  }
+  function blob(ctx,x,y,r){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}
+  function spot(ctx,x,y,r,color,alpha){
+    ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color;
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.restore();
+  }
+
+  /* ================= Orientation / look controls ================= */
+  let usingOrientation = false;
+  let dragYaw = 0, dragPitch = 0, dragging=false, lastX=0, lastY=0;
+  const zee = new THREE.Vector3(0,0,1);
+  const q0 = new THREE.Quaternion();
+  const q1 = new THREE.Quaternion(-Math.sqrt(0.5),0,0,Math.sqrt(0.5));
+  const euler = new THREE.Euler();
+
+  function setCameraFromDeviceOrientation(alpha, beta, gamma){
+    euler.set(THREE.MathUtils.degToRad(beta), THREE.MathUtils.degToRad(alpha), -THREE.MathUtils.degToRad(gamma), 'YXZ');
+    camera.quaternion.setFromEuler(euler);
+    camera.quaternion.multiply(q1);
+  }
+
+  function onDeviceOrientation(e){
+    if(e.alpha===null) return;
+    setCameraFromDeviceOrientation(e.alpha, e.beta||0, e.gamma||0);
+  }
+
+  function setupDrag(){
+    tapCatcher.addEventListener('pointerdown', e=>{
+      dragging=true; lastX=e.clientX; lastY=e.clientY;
+    });
+    window.addEventListener('pointermove', e=>{
+      if(!dragging || usingOrientation) return;
+      const dx=e.clientX-lastX, dy=e.clientY-lastY;
+      lastX=e.clientX; lastY=e.clientY;
+      dragYaw -= dx*0.25;
+      dragPitch = Math.max(-80, Math.min(80, dragPitch - dy*0.25));
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        THREE.MathUtils.degToRad(dragPitch), THREE.MathUtils.degToRad(dragYaw), 0, 'YXZ'));
+      camera.quaternion.copy(q);
+    });
+    window.addEventListener('pointerup', ()=>dragging=false);
+  }
+
+  /* ================= Lock-on / scanning logic ================= */
+  let lockedPlanetId = null;
+  const centerVec = new THREE.Vector2(0,0);
+  const halfFovRad = THREE.MathUtils.degToRad(camera_fov_placeholder());
+  function camera_fov_placeholder(){return 31;} // half of 62deg fov, used for angle threshold reference only
+
+  function updateLockOn(){
+    let best=null, bestAngle=999;
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    PLANETS.forEach(p=>{
+      if(scannedSet.has(p.id)) return;
+      const entry = meshById[p.id];
+      const dirToPlanet = entry.pos.clone().normalize();
+      const angle = THREE.MathUtils.radToDeg(forward.angleTo(dirToPlanet));
+      if(angle < LOCK_ANGLE_DEG && angle < bestAngle){bestAngle=angle; best=p;}
+    });
+    if(best){
+      if(lockedPlanetId !== best.id){
+        lockedPlanetId = best.id;
+        reticle.classList.add('locked');
+        lockLabel.classList.add('show');
+        lockName.textContent = best.name;
+      }
+    } else if(lockedPlanetId){
+      lockedPlanetId = null;
+      reticle.classList.remove('locked');
+      lockLabel.classList.remove('show');
+    }
+  }
+
+  tapCatcher.addEventListener('click', ()=>{
+    if(lockedPlanetId && planetModal.classList.contains('hidden')){
+      openPlanetModal(lockedPlanetId);
+    }
+  });
+
+  /* ================= Compass strip ================= */
+  const PX_PER_DEG = 3;
+  function buildCompass(){
+    compassTrack.innerHTML='';
+    for(let deg=0; deg<360; deg+=10){
+      const tick=document.createElement('div');
+      tick.className='cmp-tick';
+      tick.style.left=(1080 + deg*PX_PER_DEG)+'px';
+      compassTrack.appendChild(tick);
+    }
+    ['N','E','S','W'].forEach((lbl,i)=>{
+      const el=document.createElement('div');
+      el.className='cmp-label'; el.textContent=lbl;
+      el.style.left=(1080 + i*90*PX_PER_DEG)+'px';
+      compassTrack.appendChild(el);
+    });
+    PLANETS.forEach(p=>{
+      const dot=document.createElement('div');
+      dot.className='cmp-dot'; dot.id='cmp-'+p.id;
+      dot.style.left=(1080 + p.az*PX_PER_DEG)+'px';
+      compassTrack.appendChild(dot);
+    });
+  }
+  function updateCompass(){
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    const yawDeg = THREE.MathUtils.radToDeg(Math.atan2(forward.x, -forward.z));
+    compassTrack.style.transform = `translateX(${ -yawDeg*PX_PER_DEG }px)`;
+  }
+
+  /* ================= Modal / quiz flow ================= */
+  function openPlanetModal(id){
+    const p = PLANETS.find(pl=>pl.id===id);
+    modalSwatch.style.background = p.color;
+    modalTitle.textContent = p.name;
+    modalFact.textContent = p.fact;
+    quizQText.textContent = p.q;
+    quizFeedback.textContent = '';
+    quizFeedback.className='';
+    modalContinue.style.display='none';
+    quizOptions.innerHTML='';
+    p.opts.forEach((opt,i)=>{
+      const b=document.createElement('button');
+      b.className='quiz-opt'; b.textContent=opt;
+      b.addEventListener('click', ()=>answerQuiz(p, i, b));
+      quizOptions.appendChild(b);
+    });
+    planetModal.classList.remove('hidden');
+  }
+
+  function answerQuiz(p, chosenIdx, btnEl){
+    const buttons = Array.from(quizOptions.children);
+    buttons.forEach(b=>b.style.pointerEvents='none');
+    if(chosenIdx === p.correct){
+      btnEl.classList.add('correct');
+      quizFeedback.textContent = 'Correct! Discovery logged.';
+      quizFeedback.className='correct';
+      registerScan(p, true);
+    } else {
+      btnEl.classList.add('wrong');
+      buttons[p.correct].classList.add('correct');
+      quizFeedback.textContent = 'Not quite — but the discovery is still logged.';
+      quizFeedback.className='wrong';
+      registerScan(p, false);
+    }
+    modalContinue.style.display='block';
+  }
+
+  function registerScan(p, correct){
+    if(scannedSet.has(p.id)) return;
+    scannedSet.add(p.id);
+    if(correct) scannedCount++;
+    scoreValue.textContent = `${scannedCount} / ${PLANETS.length}`;
+    const dot = document.getElementById('cmp-'+p.id);
+    if(dot) dot.classList.add('scanned');
+    lockedPlanetId=null;
+    reticle.classList.remove('locked');
+    lockLabel.classList.remove('show');
+  }
+
+  modalContinue.addEventListener('click', ()=>{
+    planetModal.classList.add('hidden');
+    if(scannedSet.size === PLANETS.length) showEndScreen();
+  });
+
+  function showEndScreen(){
+    endSummary.textContent = `You logged all ${PLANETS.length} worlds and scored ${scannedCount} out of ${PLANETS.length} on the quick checks.`;
+    progressTrack.innerHTML='';
+    PLANETS.forEach(()=>{
+      const d=document.createElement('div'); d.className='pdot done'; progressTrack.appendChild(d);
+    });
+    endScreen.classList.remove('hidden');
+  }
+
+  replayBtn.addEventListener('click', ()=>window.location.reload());
+
+  /* ================= Start / permission flow ================= */
+  startBtn.addEventListener('click', beginMission);
+  planetariumBtn.addEventListener('click', ()=>{
+    permScreen.classList.add('hidden');
+    document.body.classList.add('no-camera');
+    videoEl.classList.add('hidden-cam');
+    modeChip.textContent = 'Planetarium Mode';
+    launchScene(false);
+  });
+
+  async function beginMission(){
+    startBtn.disabled = true;
+    startBtn.textContent = 'Calibrating…';
+    let cameraOk = false, orientationOk = false;
+
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}, audio:false});
+      videoEl.srcObject = stream;
+      await videoEl.play();
+      cameraOk = true;
+    }catch(err){ cameraOk = false; }
+
+    if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      try{
+        const res = await DeviceOrientationEvent.requestPermission();
+        orientationOk = (res === 'granted');
+      }catch(err){ orientationOk = false; }
+    } else if(window.DeviceOrientationEvent){
+      orientationOk = true;
+    }
+
+    startScreen.classList.add('hidden');
+
+    if(!cameraOk){
+      document.body.classList.add('no-camera');
+      videoEl.classList.add('hidden-cam');
+    }
+
+    if(!orientationOk){
+      permScreen.classList.remove('hidden');
+      document.getElementById('perm-title').textContent = cameraOk ? 'Motion sensors unavailable' : 'Camera & motion access needed';
+      document.getElementById('perm-text').textContent = 'You can still play in Planetarium Mode — drag the screen to look around instead.';
+      return;
+    }
+
+    modeChip.textContent = cameraOk ? 'AR Mode' : 'Planetarium Mode';
+    launchScene(orientationOk);
+  }
+
+  setupDrag(); // wired once; pointermove handler no-ops while orientation is active
+
+  function launchScene(withOrientation){
+    initScene();
+    buildCompass();
+    if(withOrientation){
+      usingOrientation = true;
+      window.addEventListener('deviceorientation', onDeviceOrientation, true);
+    }
+    animate();
+  }
+
+  function animate(){
+    requestAnimationFrame(animate);
+    updateLockOn();
+    updateCompass();
+    renderer.render(scene, camera);
+  }
+
+})();
+</script>
+</body>
+</html>
