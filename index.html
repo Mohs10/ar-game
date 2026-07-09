@@ -228,8 +228,23 @@
     </div>
   </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r160/three.min.js"></script>
-<script>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js";
+
+window.addEventListener('error', function(e){
+  showFatalError('Script error: ' + (e.message || 'unknown') + (e.filename ? (' (' + e.filename.split('/').pop() + ':' + e.lineno + ')') : ''));
+});
+function showFatalError(msg){
+  let box = document.getElementById('fatal-error-box');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'fatal-error-box';
+    box.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;background:#2a0e08;color:#F5F1E8;border:1px solid #E2725B;border-radius:10px;padding:12px 14px;font-family:monospace;font-size:12px;line-height:1.5;';
+    document.body.appendChild(box);
+  }
+  box.textContent = msg;
+}
+
 (function(){
   "use strict";
 
@@ -617,12 +632,19 @@
     startBtn.textContent = 'Calibrating…';
     let cameraOk = false, orientationOk = false;
 
+    let cameraErrMsg = '';
     try{
+      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+        throw new Error('getUserMedia not supported (page may not be served over https)');
+      }
       const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}, audio:false});
       videoEl.srcObject = stream;
       await videoEl.play();
       cameraOk = true;
-    }catch(err){ cameraOk = false; }
+    }catch(err){
+      cameraOk = false;
+      cameraErrMsg = (err && err.name) ? (err.name + ': ' + err.message) : String(err);
+    }
 
     if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
       try{
@@ -640,10 +662,15 @@
       videoEl.classList.add('hidden-cam');
     }
 
+    if(!cameraOk && cameraErrMsg){
+      showFatalError('Camera error: ' + cameraErrMsg);
+    }
+
     if(!orientationOk){
       permScreen.classList.remove('hidden');
       document.getElementById('perm-title').textContent = cameraOk ? 'Motion sensors unavailable' : 'Camera & motion access needed';
-      document.getElementById('perm-text').textContent = 'You can still play in Planetarium Mode — drag the screen to look around instead.';
+      document.getElementById('perm-text').textContent = 'You can still play in Planetarium Mode — drag the screen to look around instead.'
+        + (cameraErrMsg ? (' (Camera detail: ' + cameraErrMsg + ')') : '');
       return;
     }
 
